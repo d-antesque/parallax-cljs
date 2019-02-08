@@ -5,6 +5,7 @@
 
 (defonce app-state (atom {:container (.querySelector js/document ".vis-container")
                           :buildings []
+                          :layers []
                           :base-speed 5}))
 
 (defn draw-rect [ctx x y width height color]
@@ -18,24 +19,24 @@
   (let [ctx (:ctx @app-state)]
     (draw-rect ctx (:x building) (:y building) (:width building) (:height building) (:color building))))
 
-(defn add-building [offset height]
+(defn create-building [offset-x offset-y height color]
   (let [sizes (:sizes @app-state)]
     (def building {:width 50
                    :height height
-                   :x (+ (:width sizes) offset)
-                   :y (- (:height sizes) height)
-                   :color "#222"})
-    (swap! app-state update-in [:buildings] conj building)
+                   :x (+ (:width sizes) offset-x)
+                   :y (- (:height sizes) height offset-y)
+                   :color color})
     building
     ))
 
 ;; Parametros por defecto
-(defn populate [accum-width]
-  (println accum-width)
+(defn populate-layer [layer accum-width]
   (if (<= accum-width (:width (:sizes @app-state)))
     (do (def height (+ 20 (rand-int 120)))
-        (recur (+ accum-width (:width (add-building accum-width height))))))
-  )
+        (def building (create-building accum-width (:y layer) height (:color layer)))
+        (recur (update-in layer [:buildings] conj building) (+ accum-width (:width building))))
+    layer
+  ))
 
 (defn create-canvas [container]
   (let [canvas (.createElement js/document "CANVAS")]
@@ -47,25 +48,35 @@
     )
   )
 
-(defn advance []
-  (let [{buildings :buildings base-speed :base-speed sizes :sizes} @app-state]
-    (swap! app-state assoc :buildings (map (fn [b] (update-in b [:x] #(- % base-speed))) buildings))
+(defn update-layer [layer]
+  (def buildings (map (fn [b] (update-in b [:x] #(- % (:speed layer)))) (:buildings layer)))
+  (def leftmost (first buildings))
 
-    ;; Mejor forma de hacer esto
-    (def leftmost (first buildings))
-    (when (<= (+ (:width leftmost) (:x leftmost)) 0)
-      (def new-building (assoc leftmost :x (:width sizes)))
-      (swap! app-state assoc :buildings (conj (into [] (drop 1 buildings)) new-building))
-      )
+  (if (<= (+ (:width leftmost) (:x leftmost)) 0)
+    (do (def new-building (assoc leftmost :x (:width (:sizes @app-state))))
+        (assoc layer :buildings (conj (into [] (drop 1 buildings)) new-building)))
+    (assoc layer :buildings buildings)
+    ;(swap! app-state assoc :buildings (conj (into [] (drop 1 buildings)) new-building))
+    )
+  )
+
+(defn draw-layer [layer]
+  (doseq [building (:buildings layer)]
+    (draw-building building))
+  )
+
+(defn advance []
+  (def updated-layers
+    (swap! app-state assoc :layers (doall (map update-layer (:layers @app-state))))
     )
   )
 
 (defn render []
-  (let [{sizes :sizes ctx :ctx buildings :buildings} @app-state]
+  (let [{sizes :sizes ctx :ctx layers :layers} @app-state]
     (advance)
     (.clearRect ctx 0 0 (:width sizes) (:height sizes))
     ;; Esto tiene mala pinta
-    (doall (map draw-building buildings))
+    (doseq [layer (reverse layers)] (draw-layer layer))
     (.requestAnimationFrame js/window render)
     )
   )
@@ -79,8 +90,14 @@
                           :canvas canvas
                           :ctx ctx})
 
-  ;; (add-building)
-  (populate 0)
+  (def layers [(populate-layer {:buildings [] :color "#222" :y 0 :speed 2} 0)
+               (populate-layer {:buildings [] :color "#333" :y 20 :speed 1.6} 0)
+               (populate-layer {:buildings [] :color "#444" :y 40 :speed 1.1} 0)
+               (populate-layer {:buildings [] :color "#555" :y 60 :speed 0.6} 0)
+               (populate-layer {:buildings [] :color "#666" :y 80 :speed 0.2} 0)
+               ])
+
+  (swap! app-state assoc :layers layers)
 
   ;; Una forma mejor de hacer timeouts?
   ;; (js/setTimeout add-building 1000)
@@ -92,7 +109,6 @@
 (defn clear []
   (.remove (.querySelector js/document ".vis-canvas"))
   (swap! app-state assoc :buildings [])
-  (println @app-state)
   )
 
 (defn on-js-reload []
